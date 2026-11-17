@@ -1,8 +1,7 @@
-.gradle/
-build/
 bin/
+.vscode/
+build/
 *.class
 *.jar
-.idea/
-.vscode/
 *.log
+.gradle/
