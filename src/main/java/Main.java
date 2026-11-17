@@ -1,68 +1,87 @@
 import javafx.application.Application;
+import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.TextArea;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
-import javafx.geometry.Pos;
 import javafx.stage.Stage;
 
 public class Main extends Application {
+    private static final String BACKGROUND_COLOR = "#2b2b2b";
+    private static final String PANEL_COLOR = "#1b1b1b";
+
+    private static final String BUTTON_STYLE =
+            "-fx-background-color: #3b3b3b; -fx-text-fill: #ffffff;";
+
+    private static final int SIDEBAR_WIDTH = 200;
+    private static final int TOOL_BUTTON_WIDTH = 100;
+    private static final int TOOL_BUTTON_HEIGHT = 40;
+
     @Override
     public void start(Stage primaryStage) {
-
         BorderPane root = new BorderPane();
-        root.setStyle("-fx-background-color: #2b2b2b;");
+        root.setStyle(backgroundStyle(BACKGROUND_COLOR));
 
-        VBox leftPanel = new VBox(10);
-        leftPanel.setStyle("-fx-background-color: #1b1b1b;");
-        leftPanel.setPrefWidth(200);
-        leftPanel.setAlignment(Pos.BOTTOM_LEFT);
+        // Верхняя панель с кнопками меню.
+        HBox topPanel = new HBox(
+                createButton("File"),
+                createButton("Edit")
+        );
+        topPanel.setStyle(backgroundStyle(BACKGROUND_COLOR));
 
-        HBox topPanel = new HBox();
-        topPanel.setStyle("-fx-background-color: #2b2b2b;");
-
-        HBox toolsPanel = new HBox(-3);
-        toolsPanel.setStyle("-fx-background-color: #1b1b1b;");
-        toolsPanel.setPrefWidth(200);
+        // Панель инструментов внизу боковой панели.
+        HBox toolsPanel = new HBox(
+                -3,
+                createButton("Settings", TOOL_BUTTON_WIDTH, TOOL_BUTTON_HEIGHT),
+                createButton("Terminal", TOOL_BUTTON_WIDTH, TOOL_BUTTON_HEIGHT)
+        );
+        toolsPanel.setStyle(backgroundStyle(PANEL_COLOR));
+        toolsPanel.setPrefWidth(SIDEBAR_WIDTH);
         toolsPanel.setAlignment(Pos.BOTTOM_CENTER);
 
-        Button fileButton = new Button("File");
-        fileButton.setStyle("-fx-background-color: #3b3b3b; -fx-text-fill: #FFFFFF");
+        // Левая боковая панель.
+        VBox leftPanel = new VBox(10, toolsPanel);
+        leftPanel.setStyle(backgroundStyle(PANEL_COLOR));
+        leftPanel.setPrefWidth(SIDEBAR_WIDTH);
+        leftPanel.setAlignment(Pos.BOTTOM_LEFT);
 
-        Button editButton = new Button("Edit");
-        editButton.setStyle("-fx-background-color: #3b3b3b; -fx-text-fill: #FFFFFF");
-
-        Button settingsButton = new Button("Settings");
-        settingsButton.setStyle("-fx-background-color: #3b3b3b; -fx-text-fill: #FFFFFF");
-        settingsButton.setPrefWidth(100);
-        settingsButton.setPrefHeight(40);
-
-        Button terminalButton = new Button("Terminal");
-        terminalButton.setStyle("-fx-background-color: #3b3b3b; -fx-text-fill: #FFFFFF");
-        terminalButton.setPrefWidth(100);
-        terminalButton.setPrefHeight(40);
-
+        // Область редактирования кода.
         TextArea codeField = new TextArea();
-        codeField.setStyle("-fx-control-inner-background: #2b2b2b; -fx-font-size: 18px;");
-
-        topPanel.getChildren().addAll(fileButton, editButton);
-        toolsPanel.getChildren().addAll(settingsButton, terminalButton);
-        leftPanel.getChildren().addAll(toolsPanel);
+        codeField.setStyle(
+                "-fx-control-inner-background: " + BACKGROUND_COLOR + ";" +
+                "-fx-font-size: 18px;"
+        );
 
         root.setLeft(leftPanel);
         root.setCenter(codeField);
         root.setTop(topPanel);
 
-        Scene scene = new Scene(root, 800, 600);
+        // Главное окно приложения.
+        Scene scene = new Scene(root, 1000, 800);
         primaryStage.setTitle("Iron IDE");
         primaryStage.setScene(scene);
         primaryStage.show();
+    }
+
+    private static Button createButton(String text) {
+        Button button = new Button(text);
+        button.setStyle(BUTTON_STYLE);
+        return button;
+    }
+
+    private static Button createButton(String text, double width, double height) {
+        Button button = createButton(text);
+        button.setPrefSize(width, height);
+        return button;
+    }
+
+    private static String backgroundStyle(String color) {
+        return "-fx-background-color: " + color + ";";
     }
 
     public static void main(String[] args) {
         launch(args);
     }
 }
-
