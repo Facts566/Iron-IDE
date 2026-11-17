@@ -18,10 +18,15 @@ public class Main extends Application {
         VBox leftPanel = new VBox(10);
         leftPanel.setStyle("-fx-background-color: #1b1b1b;");
         leftPanel.setPrefWidth(200);
-        leftPanel.setAlignment(Pos.TOP_LEFT);
+        leftPanel.setAlignment(Pos.BOTTOM_LEFT);
 
         HBox topPanel = new HBox();
         topPanel.setStyle("-fx-background-color: #2b2b2b;");
+
+        HBox toolsPanel = new HBox(-3);
+        toolsPanel.setStyle("-fx-background-color: #1b1b1b;");
+        toolsPanel.setPrefWidth(200);
+        toolsPanel.setAlignment(Pos.BOTTOM_CENTER);
 
         Button fileButton = new Button("File");
         fileButton.setStyle("-fx-background-color: #3b3b3b; -fx-text-fill: #FFFFFF");
@@ -29,10 +34,22 @@ public class Main extends Application {
         Button editButton = new Button("Edit");
         editButton.setStyle("-fx-background-color: #3b3b3b; -fx-text-fill: #FFFFFF");
 
-        topPanel.getChildren().addAll(fileButton, editButton);
+        Button settingsButton = new Button("Settings");
+        settingsButton.setStyle("-fx-background-color: #3b3b3b; -fx-text-fill: #FFFFFF");
+        settingsButton.setPrefWidth(100);
+        settingsButton.setPrefHeight(40);
+
+        Button terminalButton = new Button("Terminal");
+        terminalButton.setStyle("-fx-background-color: #3b3b3b; -fx-text-fill: #FFFFFF");
+        terminalButton.setPrefWidth(100);
+        terminalButton.setPrefHeight(40);
 
         TextArea codeField = new TextArea();
         codeField.setStyle("-fx-control-inner-background: #2b2b2b; -fx-font-size: 18px;");
+
+        topPanel.getChildren().addAll(fileButton, editButton);
+        toolsPanel.getChildren().addAll(settingsButton, terminalButton);
+        leftPanel.getChildren().addAll(toolsPanel);
 
         root.setLeft(leftPanel);
         root.setCenter(codeField);

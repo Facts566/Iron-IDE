@@ -4,5 +4,4 @@ build/
 *.class
 *.jar
 *.log
-*.gradle
 .gradle/
