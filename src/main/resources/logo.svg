@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="512" height="512" viewBox="0 0 512 512">
+  <title>Anvil logo</title>
+
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f1f8ff"/>
+      <stop offset="1" stop-color="#c4d6ed"/>
+    </linearGradient>
+
+    <radialGradient id="glow">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="metal" x1="0" y1="0" x2=".8" y2="1">
+      <stop offset="0" stop-color="#657991"/>
+      <stop offset=".4" stop-color="#3b4c63"/>
+      <stop offset="1" stop-color="#1c293c"/>
+    </linearGradient>
+
+    <linearGradient id="top" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b8c8d9"/>
+      <stop offset="1" stop-color="#71869e"/>
+    </linearGradient>
+
+    <linearGradient id="base" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#536880"/>
+      <stop offset="1" stop-color="#25344a"/>
+    </linearGradient>
+
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="200%">
+      <feDropShadow dx="0" dy="16" stdDeviation="14"
+                    flood-color="#203b60" flood-opacity=".24"/>
+    </filter>
+
+    <filter id="blur" x="-30%" y="-100%" width="160%" height="300%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="100" fill="url(#background)"/>
+  <circle cx="192" cy="152" r="240" fill="url(#glow)"/>
+
+  <!-- Subtle background accents -->
+  <circle cx="422" cy="100" r="108"
+          fill="none" stroke="#ffffff" stroke-opacity=".3"
+          stroke-width="26"/>
+  <circle cx="70" cy="445" r="110"
+          fill="#9eb9db" fill-opacity=".18"/>
+
+  <!-- Ground shadow -->
+  <ellipse cx="276" cy="389" rx="125" ry="13"
+           fill="#294361" opacity=".18" filter="url(#blur)"/>
+
+  <g filter="url(#shadow)">
+    <!-- Main body and horn -->
+    <path
+      d="M 64 175
+         L 162 153
+         H 324
+         V 139
+         H 425
+         V 221
+         H 337
+         C 310 230 298 250 298 276
+         V 301
+         C 298 315 316 330 343 345
+         H 367
+         V 376
+         H 174
+         V 345
+         H 196
+         C 224 330 242 315 242 301
+         V 276
+         C 242 253 229 237 207 225
+         H 168
+         C 125 225 90 207 64 175 Z"
+      fill="url(#metal)"
+      stroke="#243247" stroke-width="3" stroke-linejoin="round"/>
+
+    <!-- Upper metal surface -->
+    <path d="M 64 175 L 162 153 H 324 V 139 H 425
+             L 405 162 H 335 L 320 176 H 164 L 99 185 Z"
+          fill="url(#top)"/>
+
+    <!-- Right side -->
+    <path d="M 405 162 L 425 139 V 221 H 405 Z"
+          fill="#29394f"/>
+
+    <!-- Front edge of the working surface -->
+    <path d="M 164 176 H 320 L 335 162 H 405 V 180
+             H 340 L 325 192 H 169 Z"
+          fill="#72869c" opacity=".65"/>
+
+    <!-- Curved neck highlight -->
+    <path d="M 212 231
+             C 238 244 252 259 252 282
+             V 302
+             C 252 321 232 337 213 347"
+          fill="none" stroke="#a0b4cb" stroke-opacity=".32"
+          stroke-width="6" stroke-linecap="round"/>
+
+    <!-- Base bevel -->
+    <path d="M 196 345 H 343 L 367 360 H 174 Z"
+          fill="#71859c"/>
+    <path d="M 174 360 H 367 V 376 H 174 Z"
+          fill="url(#base)"/>
+
+    <!-- Fine highlights -->
+    <path d="M 166 155 H 322 M 331 141 H 420"
+          fill="none" stroke="#e2edf7" stroke-opacity=".7"
+          stroke-width="3" stroke-linecap="round"/>
+    <path d="M 181 362 H 358"
+          fill="none" stroke="#a9bed3" stroke-opacity=".3"
+          stroke-width="2"/>
+  </g>
+</svg>
