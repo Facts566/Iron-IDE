@@ -1,12 +1,15 @@
+import java.util.function.IntFunction;
 import javafx.application.Application;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
-import javafx.scene.control.TextArea;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
+import org.fxmisc.richtext.InlineCssTextArea;
+import org.fxmisc.richtext.LineNumberFactory;
 
 public class Main extends Application {
     private static final String BACKGROUND_COLOR = "#2b2b2b";
@@ -48,11 +51,27 @@ public class Main extends Application {
         leftPanel.setAlignment(Pos.BOTTOM_LEFT);
 
         // Область редактирования кода.
-        TextArea codeField = new TextArea();
+        InlineCssTextArea codeField = new InlineCssTextArea();
         codeField.setStyle(
-                "-fx-control-inner-background: " + BACKGROUND_COLOR + ";" +
+                "-fx-background-color: " + BACKGROUND_COLOR + ";" +
                 "-fx-font-size: 18px;"
         );
+        codeField.textProperty().addListener((obs, oldText, newText) ->
+                codeField.setStyle(0, codeField.getLength(), "-fx-fill: #ffffff;")
+        );
+        codeField.setWrapText(false);
+
+        // Настройка тёмной колонки с номерами строк.
+        IntFunction<Node> numberFactory = LineNumberFactory.get(codeField);
+        codeField.setParagraphGraphicFactory(line -> {
+            Node node = numberFactory.apply(line);
+            node.setStyle(
+                    "-fx-background-color: " + PANEL_COLOR + ";" +
+                    "-fx-text-fill: #888888;" +
+                    "-fx-padding: 0 10 0 10;"
+            );
+            return node;
+        });
 
         root.setLeft(leftPanel);
         root.setCenter(codeField);
