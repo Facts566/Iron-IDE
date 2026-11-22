@@ -1,12 +1,15 @@
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.IntFunction;
 import java.util.regex.Matcher;
@@ -24,7 +27,11 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ContentDisplay;
 import javafx.scene.control.IndexRange;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TreeCell;
+import javafx.scene.control.TreeItem;
+import javafx.scene.control.TreeView;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
@@ -36,6 +43,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.stage.Window;
@@ -61,8 +69,21 @@ public class UI {
     private Path currentFile;
     private String savedText = "";
 
+    // --- вкладки (каждая вкладка хранит свой текст) ---
+    private final List<Tab> tabs = new ArrayList<>();
+    private Tab activeTab;
+    private HBox tabBar;
+
+    // --- дерево проекта в левой панели ---
+    private Path projectDir;
+    private TreeView<Path> projectTree;
+    private ScrollPane projectScroll;
+    private Label projectHeaderLabel;
+    private Label projectPlaceholder;
+
     // --- верхняя панель и выпадающие меню ---
     private VBox topPanel;
+    private HBox menuRow;
     private VBox fileMenu;
     private VBox editMenu;
     private Button fileMenuButton;
@@ -142,7 +163,95 @@ public class UI {
             "    -fx-text-fill: #ffffff;" +
             "    -fx-cursor: hand;" +
             "}" +
-            ".find-btn:hover { -fx-background-color: #4a4a4a; }";
+            ".find-btn:hover { -fx-background-color: #4a4a4a; }" +
+            // --- панель вкладок ---
+            ".tab-bar { -fx-background-color: #1e1e1e; -fx-padding: 0; }" +
+            ".tab {" +
+            "    -fx-background-color: #1e1e1e;" +
+            "    -fx-background-radius: 0;" +
+            "    -fx-border-color: transparent #333333 transparent transparent;" +
+            "    -fx-border-radius: 0;" +
+            "    -fx-padding: 0;" +
+            "}" +
+            ".tab.active {" +
+            "    -fx-background-color: " + BACKGROUND_COLOR + ";" +
+            "    -fx-border-color: #4a90d9 transparent transparent transparent;" +
+            "}" +
+            ".tab-btn {" +
+            "    -fx-background-color: transparent;" +
+            "    -fx-background-radius: 0;" +
+            "    -fx-background-insets: 0;" +
+            "    -fx-border-color: transparent;" +
+            "    -fx-text-fill: #9a9a9a;" +
+            "    -fx-alignment: CENTER_LEFT;" +
+            "    -fx-padding: 6 4 6 12;" +
+            "    -fx-cursor: hand;" +
+            "}" +
+            ".tab-btn:hover { -fx-text-fill: #dddddd; }" +
+            ".tab-btn:focused { -fx-border-color: transparent; }" +
+            ".tab.active .tab-btn { -fx-text-fill: #ffffff; }" +
+            ".tab-close {" +
+            "    -fx-background-color: transparent;" +
+            "    -fx-background-radius: 0;" +
+            "    -fx-background-insets: 0;" +
+            "    -fx-border-color: transparent;" +
+            "    -fx-text-fill: #9a9a9a;" +
+            "    -fx-padding: 0 10 0 4;" +
+            "    -fx-font-size: 12px;" +
+            "    -fx-cursor: hand;" +
+            "}" +
+            ".tab-close:hover { -fx-background-color: #3b3b3b; -fx-text-fill: #ffffff; }" +
+            ".tab-close:focused { -fx-border-color: transparent; }" +
+            // --- левая панель: папка проекта ---
+            ".project-header-row { -fx-background-color: " + PANEL_COLOR + "; -fx-padding: 7 8 7 8; }" +
+            ".project-header {" +
+            "    -fx-text-fill: #9a9a9a;" +
+            "    -fx-font-size: 11px;" +
+            "    -fx-font-weight: bold;" +
+            "}" +
+            ".project-header-row .find-btn { -fx-padding: 1 7 1 7; -fx-font-size: 11px; }" +
+            ".project-placeholder {" +
+            "    -fx-text-fill: #777777;" +
+            "    -fx-font-size: 12px;" +
+            "    -fx-text-alignment: center;" +
+            "}" +
+            ".project-scroll {" +
+            "    -fx-background-color: " + PANEL_COLOR + ";" +
+            "    -fx-background: " + PANEL_COLOR + ";" +
+            "    -fx-border-color: transparent;" +
+            "    -fx-padding: 0;" +
+            "}" +
+            ".project-scroll > .viewport { -fx-background-color: " + PANEL_COLOR + "; }" +
+            ".project-scroll:focused { -fx-border-color: transparent; }" +
+            // --- дерево файлов ---
+            ".tree-view {" +
+            "    -fx-background-color: " + PANEL_COLOR + ";" +
+            "    -fx-border-color: transparent;" +
+            "    -fx-control-inner-background: " + PANEL_COLOR + ";" +
+            "    -fx-control-inner-background-alt: " + PANEL_COLOR + ";" +
+            "    -fx-selection-bar: #37373d;" +
+            "    -fx-selection-bar-non-focused: #2f2f2f;" +
+            "    -fx-text-background-color: #ffffff;" +
+            "}" +
+            ".tree-view:focused { -fx-border-color: transparent; }" +
+            ".tree-cell {" +
+            "    -fx-background-color: " + PANEL_COLOR + ";" +
+            "    -fx-background: " + PANEL_COLOR + ";" +
+            "    -fx-text-fill: #cfcfcf;" +
+            "    -fx-padding: 2 4 2 4;" +
+            "    -fx-font-size: 12px;" +
+            "}" +
+            ".tree-cell:hover { -fx-background-color: #2a2a2a; -fx-background: #2a2a2a; }" +
+            ".tree-cell.dir { -fx-text-fill: #dcb67a; }" +
+            ".tree-cell.file { -fx-text-fill: #cfcfcf; }" +
+            ".tree-cell:filled:selected {" +
+            "    -fx-background: #37373d;" +
+            "    -fx-background-color: #37373d;" +
+            "    -fx-text-fill: #ffffff;" +
+            "}" +
+            ".tree-cell > .tree-disclosure-node > .arrow {" +
+            "    -fx-background-color: #cccccc;" +
+            "}";
 
     // Стили системных диалогов (открытие/сохранение/подтверждения)
     private static final String DIALOG_CSS =
@@ -201,9 +310,11 @@ public class UI {
 
         // сначала редактор, затем панели (они ссылаются на codeField)
         root.setCenter(createCodeField());
-        root.setTop(createTopPanel());
         root.setLeft(createLeftPanel());
         root.setBottom(createFindBar());
+        // setTop последним: выпадающие меню должны рисоваться поверх
+        // боковой панели и кодового поля, а не под ними
+        root.setTop(createTopPanel());
 
         installCloseHandlers();
         installAccelerators();
@@ -230,17 +341,23 @@ public class UI {
         setMenuVisible(fileMenu, false);
         setMenuVisible(editMenu, false);
 
-        HBox row = new HBox(fileMenuButton, editMenuButton);
-        row.setStyle(backgroundStyle(BACKGROUND_COLOR));
+        menuRow = new HBox(fileMenuButton, editMenuButton);
+        menuRow.setStyle(backgroundStyle(BACKGROUND_COLOR));
 
-        VBox menus = new VBox(fileMenu, editMenu);
-        menus.setStyle(backgroundStyle(BACKGROUND_COLOR));
+        tabBar = createTabBar();
 
-        topPanel = new VBox(row, menus);
+        // Меню — НЕупраляемые дети: при открытии они накладываются поверх
+        // содержимого окна и ничего не сдвигают вниз.
+        topPanel = new VBox(menuRow, tabBar, fileMenu, editMenu);
         topPanel.setStyle(backgroundStyle(BACKGROUND_COLOR));
 
         fileMenuButton.setOnAction(event -> toggleMenu(fileMenu, fileMenuButton));
         editMenuButton.setOnAction(event -> toggleMenu(editMenu, editMenuButton));
+
+        // первая (пустая) вкладка
+        Tab first = createUntitledTab();
+        tabs.add(first);
+        activateTab(first);
 
         return topPanel;
     }
@@ -248,15 +365,20 @@ public class UI {
     private VBox buildFileMenu() {
         VBox menu = new VBox();
         menu.getStyleClass().add("menu-dropdown");
+        // не растягивать меню на всю ширину окна
+        menu.setMaxWidth(Region.USE_PREF_SIZE);
 
         saveMenuItem = createMenuItem("Save", "Ctrl+S", this::fileSave);
 
         menu.getChildren().addAll(
                 createMenuItem("New", "Ctrl+N", this::fileNew),
                 createMenuItem("Open…", "Ctrl+O", this::fileOpen),
+                createMenuItem("Open Folder…", "Ctrl+K", this::openProjectFolder),
                 createSeparator(),
                 saveMenuItem,
                 createMenuItem("Save As…", "Ctrl+Shift+S", this::fileSaveAs),
+                createSeparator(),
+                createMenuItem("Close Tab", "Ctrl+W", this::closeActiveTab),
                 createSeparator(),
                 createMenuItem("Exit", "Ctrl+Q", this::fileExit)
         );
@@ -266,6 +388,8 @@ public class UI {
     private VBox buildEditMenu() {
         VBox menu = new VBox();
         menu.getStyleClass().add("menu-dropdown");
+        // не растягивать меню на всю ширину окна
+        menu.setMaxWidth(Region.USE_PREF_SIZE);
 
         undoMenuItem = createMenuItem("Undo", "Ctrl+Z", () -> codeField.undo());
         redoMenuItem = createMenuItem("Redo", "Ctrl+Y", () -> codeField.redo());
@@ -323,17 +447,33 @@ public class UI {
 
     private static void setMenuVisible(VBox menu, boolean visible) {
         menu.setVisible(visible);
-        menu.setManaged(visible);
+        // меню никогда не участвует в раскладке — оно не занимает места
+        menu.setManaged(false);
     }
 
     private void toggleMenu(VBox menu, Button button) {
         boolean show = !menu.isVisible();
         closeMenus();
         if (show) {
-            setMenuVisible(menu, true);
+            showMenu(menu);
             button.getStyleClass().add("open");
             updateMenuStates();
         }
+    }
+
+    /** Показывает меню поверх содержимого окна, не сдвигая его. */
+    private void showMenu(VBox menu) {
+        menu.setVisible(true);
+        menu.applyCss();
+        menu.autosize(); // размер строго по содержимому (270px из CSS)
+
+        double y = menuRow.getHeight();
+        if (y <= 0) y = menuRow.prefHeight(-1); // первый пульс мог ещё не пройти
+        menu.setLayoutX(0);
+        menu.setLayoutY(y);
+
+        menu.requestLayout();
+        menu.layout(); // раскладываем пункты внутри самого меню
     }
 
     private void closeMenus() {
@@ -391,34 +531,131 @@ public class UI {
         return false;
     }
 
-    // ================= ДЕЙСТВИЯ МЕНЮ «FILE» =================
+    // ================= ВКЛАДКИ =================
 
-    private boolean isDirty() {
-        return !codeField.getText().equals(savedText);
+    /** Открытая вкладка: свой файл, свой текст и своё состояние сохранности. */
+    private static final class Tab {
+        String title;
+        Path path;          // null — безымянный (не сохранённый) файл
+        String text = "";
+        String savedText = "";
+        int caret;
+        Button button;      // кнопка на панели вкладок (маркер «•»)
+
+        Tab(String title, Path path) {
+            this.title = title;
+            this.path = path;
+        }
     }
 
-    private Window window() {
-        Scene scene = codeField.getScene();
-        return scene == null ? null : scene.getWindow();
+    private static Tab createUntitledTab() {
+        return new Tab("Untitled", null);
     }
 
-    private void fileNew() {
-        if (!confirmDiscardChanges()) return;
-        closeMenus();
-        currentFile = null;
-        savedText = "";
-        codeField.replaceText("");
-        codeField.moveTo(0);
+    private HBox createTabBar() {
+        HBox bar = new HBox();
+        bar.getStyleClass().add("tab-bar");
+        return bar;
+    }
+
+    private void rebuildTabBar() {
+        tabBar.getChildren().clear();
+        for (Tab tab : tabs) {
+            tabBar.getChildren().add(createTabNode(tab));
+        }
+    }
+
+    private HBox createTabNode(Tab tab) {
+        Button tabButton = new Button(tabTitle(tab));
+        tabButton.getStyleClass().add("tab-btn");
+        tabButton.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(tabButton, Priority.ALWAYS);
+        tabButton.setOnAction(event -> activateTab(tab));
+        tab.button = tabButton;
+
+        Button closeButton = new Button("×");
+        closeButton.getStyleClass().add("tab-close");
+        closeButton.setOnAction(event -> closeTab(tab));
+
+        HBox node = new HBox(tabButton, closeButton);
+        node.getStyleClass().add("tab");
+        node.setAlignment(Pos.CENTER_LEFT);
+        if (tab == activeTab) node.getStyleClass().add("active");
+        return node;
+    }
+
+    /** Название вкладки с маркером «•», если есть несохранённые правки. */
+    private String tabTitle(Tab tab) {
+        boolean dirty = tab == activeTab
+                ? isDirty()
+                : !Objects.equals(tab.text, tab.savedText);
+        return tab.title + (dirty ? " •" : "");
+    }
+
+    private void activateTab(Tab tab) {
+        if (tab == null || tab == activeTab) return;
+
+        // запоминаем состояние покидаемой вкладки
+        if (activeTab != null) {
+            activeTab.text = codeField.getText();
+            activeTab.savedText = savedText;
+            activeTab.path = currentFile;
+            activeTab.caret = codeField.getCaretPosition();
+        }
+
+        activeTab = tab;
+        currentFile = tab.path;
+        savedText = tab.savedText;
+
+        codeField.replaceText(tab.text);
+        codeField.moveTo(Math.min(tab.caret, tab.text.length()));
+        codeField.requestFollowCaret();
+
+        // История отмены своя для каждой активации: после переключения
+        // Ctrl+Z не должен возвращать текст чужого файла.
+        codeField.getUndoManager().forgetHistory();
+
+        rebuildTabBar();
         updateTitle();
     }
 
-    private void fileOpen() {
+    private void closeActiveTab() {
         closeMenus();
-        File selected = createFileChooser("Открыть файл").showOpenDialog(window());
-        if (selected == null) return;
+        if (activeTab != null) closeTab(activeTab);
+    }
+
+    private void closeTab(Tab tab) {
+        closeMenus();
+        activateTab(tab); // закрываемая вкладка становится активной
         if (!confirmDiscardChanges()) return;
 
-        Path path = selected.toPath();
+        int index = tabs.indexOf(tab);
+        tabs.remove(tab);
+
+        if (tabs.isEmpty()) {
+            Tab fresh = createUntitledTab();
+            tabs.add(fresh);
+            activeTab = null;
+            activateTab(fresh);
+        } else {
+            activeTab = null;
+            activateTab(tabs.get(Math.min(index, tabs.size() - 1)));
+        }
+        rebuildTabBar();
+        codeField.requestFocus();
+    }
+
+    /** Открывает файл в вкладке (или активирует уже открытую). */
+    private void openFileInTab(Path path) {
+        closeMenus();
+
+        for (Tab tab : tabs) {
+            if (path.equals(tab.path)) {
+                activateTab(tab);
+                return;
+            }
+        }
+
         String content;
         try {
             content = new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
@@ -427,12 +664,67 @@ public class UI {
             return;
         }
 
-        currentFile = path;
-        savedText = content;
-        codeField.replaceText(content);
-        codeField.moveTo(0);
-        codeField.requestFollowCaret();
-        updateTitle();
+        String title = path.getFileName() == null ? path.toString() : path.getFileName().toString();
+
+        // первым файлом занимаем пустую безымянную вкладку
+        if (activeTab != null && activeTab.path == null && codeField.getText().isEmpty()) {
+            activeTab.path = path;
+            activeTab.title = title;
+            activeTab.text = content;
+            activeTab.savedText = content;
+            activeTab.caret = 0;
+            Tab reuse = activeTab;
+            activeTab = null;
+            activateTab(reuse);
+            return;
+        }
+
+        Tab tab = new Tab(title, path);
+        tab.text = content;
+        tab.savedText = content;
+        tabs.add(tab);
+        activateTab(tab);
+    }
+
+    // ================= ДЕЙСТВИЯ МЕНЮ «FILE» =================
+
+    private boolean isDirty() {
+        return !codeField.getText().equals(savedText);
+    }
+
+    /** Есть ли несохранённые правки хоть в одной вкладке. */
+    private boolean anyDirty() {
+        if (isDirty()) return true;
+        for (Tab tab : tabs) {
+            if (tab == activeTab) continue;
+            if (!Objects.equals(tab.text, tab.savedText)) return true;
+        }
+        return false;
+    }
+
+    private Window window() {
+        Scene scene = codeField.getScene();
+        return scene == null ? null : scene.getWindow();
+    }
+
+    private void fileNew() {
+        closeMenus();
+        // повторный New на пустой безымянной вкладке — просто остаёмся на ней
+        if (activeTab != null && activeTab.path == null && codeField.getText().isEmpty()) {
+            codeField.requestFocus();
+            return;
+        }
+        // старая вкладка никуда не девается — правки в ней сохранены
+        Tab tab = createUntitledTab();
+        tabs.add(tab);
+        activateTab(tab);
+    }
+
+    private void fileOpen() {
+        closeMenus();
+        File selected = createFileChooser("Открыть файл").showOpenDialog(window());
+        if (selected == null) return;
+        openFileInTab(selected.toPath());
     }
 
     private boolean fileSave() {
@@ -451,7 +743,15 @@ public class UI {
         if (selected == null) return false;
 
         currentFile = selected.toPath();
-        return writeFile(currentFile);
+        if (activeTab != null) {
+            activeTab.path = currentFile;
+            if (currentFile.getFileName() != null) {
+                activeTab.title = currentFile.getFileName().toString();
+            }
+        }
+        boolean saved = writeFile(currentFile);
+        rebuildTabBar();
+        return saved;
     }
 
     private boolean writeFile(Path path) {
@@ -462,16 +762,34 @@ public class UI {
             return false;
         }
         savedText = codeField.getText();
+        if (activeTab != null) activeTab.savedText = savedText;
         updateTitle();
         return true;
     }
 
     private void fileExit() {
-        if (!confirmDiscardChanges()) return;
+        if (anyDirty()) {
+            int choice = askDiscardChanges();
+            if (choice == CHOICE_CANCEL) return;
+            if (choice == CHOICE_SAVE && !saveAllDirtyTabs()) return;
+        }
         closeMenus();
         Window window = window();
         if (window != null) window.hide();
         else Platform.exit();
+    }
+
+    /** Сохраняет все вкладки с правками. false — пользователь отменил. */
+    private boolean saveAllDirtyTabs() {
+        for (Tab tab : new ArrayList<>(tabs)) {
+            boolean dirty = tab == activeTab
+                    ? isDirty()
+                    : !Objects.equals(tab.text, tab.savedText);
+            if (!dirty) continue;
+            activateTab(tab);
+            if (!fileSave()) return false;
+        }
+        return true;
     }
 
     private FileChooser createFileChooser(String title) {
@@ -481,6 +799,8 @@ public class UI {
         if (currentFile != null && currentFile.getParent() != null) {
             File directory = currentFile.getParent().toFile();
             if (directory.isDirectory()) chooser.setInitialDirectory(directory);
+        } else if (projectDir != null && Files.isDirectory(projectDir)) {
+            chooser.setInitialDirectory(projectDir.toFile());
         }
 
         chooser.getExtensionFilters().addAll(
@@ -493,10 +813,22 @@ public class UI {
         return chooser;
     }
 
-    /** Спрашивает про несохранённые изменения. true — можно продолжать. */
+    private static final int CHOICE_CANCEL = 0;
+    private static final int CHOICE_SAVE = 1;
+    private static final int CHOICE_DISCARD = 2;
+
+    /** Спрашивает про несохранённые изменения активной вкладки. true — можно продолжать. */
     private boolean confirmDiscardChanges() {
         if (!isDirty()) return true;
 
+        int choice = askDiscardChanges();
+        if (choice == CHOICE_CANCEL) return false;
+        if (choice == CHOICE_SAVE) return fileSave();
+        return true;
+    }
+
+    /** Диалог «есть несохранённые изменения». CHOICE_SAVE / CHOICE_DISCARD / CHOICE_CANCEL. */
+    private int askDiscardChanges() {
         ButtonType save = new ButtonType("Сохранить", ButtonData.YES);
         ButtonType discard = new ButtonType("Не сохранять", ButtonData.NO);
         ButtonType cancel = new ButtonType("Отмена", ButtonData.CANCEL_CLOSE);
@@ -508,9 +840,9 @@ public class UI {
         alert.getButtonTypes().setAll(save, discard, cancel);
 
         Optional<ButtonType> result = alert.showAndWait();
-        if (!result.isPresent() || result.get() == cancel) return false;
-        if (result.get() == save) return fileSave();
-        return true;
+        if (!result.isPresent() || result.get() == cancel) return CHOICE_CANCEL;
+        if (result.get() == save) return CHOICE_SAVE;
+        return CHOICE_DISCARD;
     }
 
     private Alert createAlert(Alert.AlertType type) {
@@ -537,6 +869,16 @@ public class UI {
     }
 
     private void updateTitle() {
+        // имя и маркер «•» на активной вкладке
+        if (activeTab != null) {
+            if (currentFile != null && currentFile.getFileName() != null) {
+                activeTab.title = currentFile.getFileName().toString();
+            }
+            if (activeTab.button != null) {
+                activeTab.button.setText(tabTitle(activeTab));
+            }
+        }
+
         Scene scene = codeField.getScene();
         if (scene == null || !(scene.getWindow() instanceof Stage)) return;
 
@@ -665,6 +1007,10 @@ public class UI {
             newScene.getAccelerators().put(
                     new KeyCodeCombination(KeyCode.O, KeyCombination.SHORTCUT_DOWN), this::fileOpen);
             newScene.getAccelerators().put(
+                    new KeyCodeCombination(KeyCode.K, KeyCombination.SHORTCUT_DOWN), this::openProjectFolder);
+            newScene.getAccelerators().put(
+                    new KeyCodeCombination(KeyCode.W, KeyCombination.SHORTCUT_DOWN), this::closeActiveTab);
+            newScene.getAccelerators().put(
                     new KeyCodeCombination(KeyCode.S, KeyCombination.SHORTCUT_DOWN), this::fileSave);
             newScene.getAccelerators().put(
                     new KeyCodeCombination(KeyCode.S, KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN),
@@ -685,6 +1031,50 @@ public class UI {
     }
 
     private VBox createLeftPanel() {
+        projectHeaderLabel = new Label("PROJECT");
+        projectHeaderLabel.getStyleClass().add("project-header");
+        projectHeaderLabel.setMaxWidth(Double.MAX_VALUE);
+
+        Button openFolderButton = new Button("Open…");
+        openFolderButton.getStyleClass().add("find-btn");
+        openFolderButton.setOnAction(event -> openProjectFolder());
+
+        HBox header = new HBox(6, projectHeaderLabel, openFolderButton);
+        header.getStyleClass().add("project-header-row");
+        header.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(projectHeaderLabel, Priority.ALWAYS);
+
+        projectPlaceholder = new Label("Папка проекта не открыта\n\nФайл → Open Folder…\nили Ctrl+K");
+        projectPlaceholder.getStyleClass().add("project-placeholder");
+        projectPlaceholder.setMaxWidth(Double.MAX_VALUE);
+        projectPlaceholder.setAlignment(Pos.CENTER);
+        VBox.setVgrow(projectPlaceholder, Priority.ALWAYS);
+
+        projectTree = new TreeView<>();
+        projectTree.setShowRoot(false);
+        projectTree.setMaxWidth(Double.MAX_VALUE);
+        projectTree.setPrefWidth(SIDEBAR_WIDTH);
+        projectTree.setCellFactory(view -> new FileTreeCell());
+        projectTree.setOnMouseClicked(event -> {
+            if (event.getClickCount() == 2) openSelectedTreeFile();
+        });
+        projectTree.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == KeyCode.ENTER) {
+                openSelectedTreeFile();
+                event.consume();
+            }
+        });
+
+        ScrollPane treeScroll = new ScrollPane(projectTree);
+        treeScroll.getStyleClass().add("project-scroll");
+        treeScroll.setFitToWidth(true);
+        treeScroll.setFocusTraversable(false);
+        treeScroll.setPannable(true);
+        VBox.setVgrow(treeScroll, Priority.ALWAYS);
+        treeScroll.setVisible(false);
+        treeScroll.setManaged(false);
+        projectScroll = treeScroll;
+
         HBox toolsPanel = new HBox(
                 -3,
                 createButton("Settings", TOOL_BUTTON_WIDTH, TOOL_BUTTON_HEIGHT),
@@ -694,12 +1084,125 @@ public class UI {
         toolsPanel.setPrefWidth(SIDEBAR_WIDTH);
         toolsPanel.setAlignment(Pos.BOTTOM_CENTER);
 
-        VBox leftPanel = new VBox(10, toolsPanel);
+        VBox leftPanel = new VBox(header, projectPlaceholder, treeScroll, toolsPanel);
         leftPanel.setStyle(backgroundStyle(PANEL_COLOR));
         leftPanel.setPrefWidth(SIDEBAR_WIDTH);
-        leftPanel.setAlignment(Pos.BOTTOM_LEFT);
         return leftPanel;
     }
+
+    /** Ячейка дерева: папки отдельным цветом, файлы — обычным. */
+    private static final class FileTreeCell extends TreeCell<Path> {
+        @Override
+        protected void updateItem(Path item, boolean empty) {
+            super.updateItem(item, empty);
+
+            getStyleClass().remove("dir");
+            getStyleClass().remove("file");
+
+            if (empty || item == null) {
+                setText(null);
+                setGraphic(null);
+                return;
+            }
+
+            boolean directory = Files.isDirectory(item);
+            Path name = item.getFileName();
+            setText(name == null ? item.toString() : name.toString());
+            getStyleClass().add(directory ? "dir" : "file");
+        }
+    }
+
+    // ================= ДЕРЕВО ПРОЕКТА =================
+
+    /** Открывает папку проекта и строит по ней дерево файлов. */
+    private void openProjectFolder() {
+        closeMenus();
+
+        DirectoryChooser chooser = new DirectoryChooser();
+        chooser.setTitle("Открыть папку проекта");
+
+        Path initial = projectDir != null ? projectDir
+                : (currentFile != null ? currentFile.getParent() : null);
+        if (initial != null && Files.isDirectory(initial)) {
+            chooser.setInitialDirectory(initial.toFile());
+        }
+
+        File dir = chooser.showDialog(window());
+        if (dir == null) return;
+        setProjectDir(dir.toPath());
+    }
+
+    /** Строит дерево файлов по указанной папке (null — очищает дерево). */
+    private void setProjectDir(Path dir) {
+        projectDir = dir;
+
+        if (dir == null || !Files.isDirectory(dir)) {
+            projectDir = null;
+            projectTree.setRoot(null);
+            projectHeaderLabel.setText("PROJECT");
+            showProjectTree(false);
+            return;
+        }
+
+        showProjectTree(true);
+        String name = dir.getFileName() == null ? dir.toString() : dir.getFileName().toString();
+        projectHeaderLabel.setText(name);
+
+        TreeItem<Path> root = createFileItem(dir);
+        root.setExpanded(true); // раскрытие подгружает содержимое папки
+        projectTree.setRoot(root);
+        projectTree.getSelectionModel().clearSelection();
+    }
+
+    private void showProjectTree(boolean show) {
+        projectPlaceholder.setVisible(!show);
+        projectPlaceholder.setManaged(!show);
+        projectScroll.setVisible(show);
+        projectScroll.setManaged(show);
+    }
+
+    /** Создаёт узел дерева; содержимое папки читается при первом раскрытии. */
+    private TreeItem<Path> createFileItem(Path path) {
+        boolean directory = Files.isDirectory(path);
+        TreeItem<Path> item = new TreeItem<>(path) {
+            @Override
+            public boolean isLeaf() {
+                return !directory;
+            }
+        };
+        if (directory) {
+            item.expandedProperty().addListener((obs, wasExpanded, expanded) -> {
+                if (expanded && item.getChildren().isEmpty()) loadDirectory(item);
+            });
+        }
+        return item;
+    }
+
+    private void loadDirectory(TreeItem<Path> item) {
+        Path dir = item.getValue();
+        List<Path> children = new ArrayList<>();
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir)) {
+            for (Path child : stream) children.add(child);
+        } catch (IOException e) {
+            return; // папку не удалось прочитать — оставляем пустой узел
+        }
+
+        children.sort(Comparator
+                .comparing((Path p) -> !Files.isDirectory(p)) // сначала папки
+                .thenComparing(p -> p.getFileName().toString().toLowerCase(Locale.ROOT)));
+
+        for (Path child : children) {
+            item.getChildren().add(createFileItem(child));
+        }
+    }
+
+    private void openSelectedTreeFile() {
+        TreeItem<Path> selected = projectTree.getSelectionModel().getSelectedItem();
+        if (selected == null) return;
+        Path path = selected.getValue();
+        if (path != null && !Files.isDirectory(path)) openFileInTab(path);
+    }
+
 
     private InlineCssTextArea createCodeField() {
         codeField = new InlineCssTextArea();
