@@ -1,7 +1,7 @@
 plugins {
-    id 'java'
     id 'application'
     id 'org.openjfx.javafxplugin' version '0.1.0'
+    id 'org.beryx.jlink' version '3.2.1'
 }
 
 repositories {
@@ -13,10 +13,33 @@ dependencies {
 }
 
 javafx {
-    version "17"
-    modules = ["javafx.controls", "javafx.fxml"]
+    version = '21'
+    modules = ['javafx.controls', 'javafx.fxml']
+}
+
+// Принудительно заставляем Gradle выбирать JAR-файлы с классификатором 'linux',
+// чтобы jlink не подхватывал пустые мета-пакеты OpenJFX
+configurations.all {
+    resolutionStrategy.eachDependency { details ->
+        if (details.requested.group == 'org.openjfx') {
+            details.artifactSelection {
+                it.selectArtifact('jar', null, 'linux')
+            }
+        }
+    }
 }
 
 application {
-    mainClass = 'Main'
+    mainClass = 'app.Main'
+    mainModule = 'test'
 }
+
+
+jlink {
+    addExtraDependencies("javafx")
+
+    launcher {
+        name = 'Iron'
+    }
+}
+

@@ -1,0 +1,46 @@
+name: Build and Release AppImage
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Build jlink image
+        run: |
+          chmod +x gradlew
+          ./gradlew clean jlink
+
+      - name: Package AppImage
+        run: |
+          mkdir -p build/Iron.AppDir
+          cp -r build/image/* build/Iron.AppDir/
+          printf '#!/bin/sh\nHERE="$(dirname "$(readlink -f "${0}")")"\nexec "${HERE}/bin/Iron" "$@"\n' > build/Iron.AppDir/AppRun
+          chmod +x build/Iron.AppDir/AppRun
+          printf '[Desktop Entry]\nName=Iron\nExec=Iron\nIcon=iron\nType=Application\nCategories=Utility;\n' > build/Iron.AppDir/iron.desktop
+          touch build/Iron.AppDir/iron.png
+          HOST="github.com"
+          REPO="AppImage/appimagetool/releases/download/continuous"
+          FILE="appimagetool-x86_64.AppImage"
+          wget -O appimagetool "https://${HOST}/${REPO}/${FILE}"
+          chmod +x appimagetool
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run build/Iron.AppDir Iron-x86_64.AppImage
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Iron-x86_64.AppImage
