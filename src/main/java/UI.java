@@ -1,20 +1,30 @@
 import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardWatchEventKinds;
+import java.nio.file.WatchEvent;
+import java.nio.file.WatchKey;
+import java.nio.file.WatchService;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.IntFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 import javafx.application.Platform;
+import javafx.geometry.Bounds;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -29,10 +39,12 @@ import javafx.scene.control.IndexRange;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
 import javafx.scene.input.Clipboard;
+import javafx.scene.input.ContextMenuEvent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
@@ -80,6 +92,16 @@ public class UI {
     private ScrollPane projectScroll;
     private Label projectHeaderLabel;
     private Label projectPlaceholder;
+    private VBox leftPanel;          // можно скрыть/показать (Ctrl+B)
+
+    // --- наблюдатель изменений файлов на диске (WatchService) ---
+    private WatchService watchService;
+    private Thread watchThread;
+    private final Object watchLock = new Object();
+    private final Set<Path> pendingChanged = new HashSet<>();
+    private final Set<Path> pendingRemoved = new HashSet<>();
+    private final Set<Path> pendingModified = new HashSet<>();
+    private boolean flushQueued;
 
     // --- верхняя панель и выпадающие меню ---
     private VBox topPanel;
@@ -94,6 +116,9 @@ public class UI {
     private Button cutMenuItem;
     private Button copyMenuItem;
     private Button pasteMenuItem;
+
+    // --- контекстное меню дерева (создать/переименовать/удалить) ---
+    private VBox contextMenu;
 
     // --- панель поиска ---
     private HBox findBar;
@@ -116,6 +141,7 @@ public class UI {
             "}" +
             ".top-menu-btn:hover { -fx-background-color: #4a4a4a; }" +
             ".top-menu-btn.open { -fx-background-color: #4a4a4a; }" +
+            ".sidebar-toggle { -fx-padding: 6 10 6 10; -fx-alignment: center; }" +
             ".menu-dropdown {" +
             "    -fx-background-color: #2d2d2d;" +
             "    -fx-background-radius: 0;" +
@@ -263,7 +289,16 @@ public class UI {
             "    -fx-background-radius: 0;" +
             "    -fx-text-fill: #ffffff;" +
             "}" +
-            ".dialog-pane .button:hover { -fx-background-color: #4a4a4a; }";
+            ".dialog-pane .button:hover { -fx-background-color: #4a4a4a; }" +
+            ".dialog-pane .text-field {" +
+            "    -fx-background-color: #3b3b3b;" +
+            "    -fx-background-radius: 0;" +
+            "    -fx-border-color: #555555;" +
+            "    -fx-border-radius: 0;" +
+            "    -fx-text-fill: #ffffff;" +
+            "    -fx-prompt-text-fill: #999999;" +
+            "}" +
+            ".dialog-pane .text-field:focused { -fx-border-color: #569cd6; }";
 
     // Функции: имя, за которым идёт "(" (объявление или вызов)
     private static final Pattern FUNCTIONS =
@@ -310,7 +345,8 @@ public class UI {
 
         // сначала редактор, затем панели (они ссылаются на codeField)
         root.setCenter(createCodeField());
-        root.setLeft(createLeftPanel());
+        leftPanel = createLeftPanel();
+        root.setLeft(leftPanel);
         root.setBottom(createFindBar());
         // setTop последним: выпадающие меню должны рисоваться поверх
         // боковой панели и кодового поля, а не под ними
@@ -336,12 +372,18 @@ public class UI {
         fileMenuButton.getStyleClass().add("top-menu-btn");
         editMenuButton.getStyleClass().add("top-menu-btn");
 
+        // кнопка скрытия/показа левой панели (как в VS Code — Ctrl+B)
+        Button sidebarToggle = new Button("☰");
+        sidebarToggle.getStyleClass().add("top-menu-btn");
+        sidebarToggle.getStyleClass().add("sidebar-toggle");
+        sidebarToggle.setOnAction(event -> toggleSidebar());
+
         fileMenu = buildFileMenu();
         editMenu = buildEditMenu();
         setMenuVisible(fileMenu, false);
         setMenuVisible(editMenu, false);
 
-        menuRow = new HBox(fileMenuButton, editMenuButton);
+        menuRow = new HBox(sidebarToggle, fileMenuButton, editMenuButton);
         menuRow.setStyle(backgroundStyle(BACKGROUND_COLOR));
 
         tabBar = createTabBar();
@@ -481,6 +523,15 @@ public class UI {
         setMenuVisible(editMenu, false);
         fileMenuButton.getStyleClass().remove("open");
         editMenuButton.getStyleClass().remove("open");
+        if (contextMenu != null) contextMenu.setVisible(false);
+    }
+
+    /** Скрывает/показывает левую панель с файлами проекта (Ctrl+B). */
+    private void toggleSidebar() {
+        closeMenus();
+        boolean show = !leftPanel.isVisible();
+        leftPanel.setVisible(show);
+        leftPanel.setManaged(show); // редактор сразу занимает освободившуюся ширину
     }
 
     /** Обновляет доступность пунктов меню в момент открытия. */
@@ -517,7 +568,9 @@ public class UI {
         });
 
         root.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
-            if (event.getCode() == KeyCode.ESCAPE && (fileMenu.isVisible() || editMenu.isVisible())) {
+            boolean anyMenuVisible = fileMenu.isVisible() || editMenu.isVisible()
+                    || (contextMenu != null && contextMenu.isVisible());
+            if (event.getCode() == KeyCode.ESCAPE && anyMenuVisible) {
                 closeMenus();
                 event.consume();
             }
@@ -563,6 +616,22 @@ public class UI {
         for (Tab tab : tabs) {
             tabBar.getChildren().add(createTabNode(tab));
         }
+        updateTabBarVisibility();
+    }
+
+    /**
+     * Панель вкладок показывается только когда есть хоть один реальный файл
+     * (или в пустой вкладке есть текст). Одна пустая «Untitled» — это лишняя
+     * пустая кнопка файла: её не должно быть видно.
+     */
+    private void updateTabBarVisibility() {
+        if (tabBar == null) return;
+        boolean show = tabs.size() > 1
+                || activeTab == null
+                || activeTab.path != null
+                || !codeField.getText().isEmpty();
+        tabBar.setVisible(show);
+        tabBar.setManaged(show);
     }
 
     private HBox createTabNode(Tab tab) {
@@ -624,10 +693,11 @@ public class UI {
         if (activeTab != null) closeTab(activeTab);
     }
 
-    private void closeTab(Tab tab) {
+    /** Закрывает вкладку. false — пользователь отказался от закрытия. */
+    private boolean closeTab(Tab tab) {
         closeMenus();
         activateTab(tab); // закрываемая вкладка становится активной
-        if (!confirmDiscardChanges()) return;
+        if (!confirmDiscardChanges()) return false;
 
         int index = tabs.indexOf(tab);
         tabs.remove(tab);
@@ -643,6 +713,7 @@ public class UI {
         }
         rebuildTabBar();
         codeField.requestFocus();
+        return true;
     }
 
     /** Открывает файл в вкладке (или активирует уже открытую). */
@@ -869,6 +940,7 @@ public class UI {
     }
 
     private void updateTitle() {
+        updateTabBarVisibility(); // текст появился/исчез — показать/скрыть вкладки
         // имя и маркер «•» на активной вкладке
         if (activeTab != null) {
             if (currentFile != null && currentFile.getFileName() != null) {
@@ -1019,6 +1091,8 @@ public class UI {
                     new KeyCodeCombination(KeyCode.F, KeyCombination.SHORTCUT_DOWN), this::showFind);
             newScene.getAccelerators().put(
                     new KeyCodeCombination(KeyCode.Q, KeyCombination.SHORTCUT_DOWN), this::fileExit);
+            newScene.getAccelerators().put(
+                    new KeyCodeCombination(KeyCode.B, KeyCombination.SHORTCUT_DOWN), this::toggleSidebar);
 
             // заголовок окна появляется только после привязки сцены к Stage
             newScene.windowProperty().addListener((obs2, oldWindow, newWindow) -> updateTitle());
@@ -1047,6 +1121,9 @@ public class UI {
         projectPlaceholder = new Label("Папка проекта не открыта\n\nФайл → Open Folder…\nили Ctrl+K");
         projectPlaceholder.getStyleClass().add("project-placeholder");
         projectPlaceholder.setMaxWidth(Double.MAX_VALUE);
+        // у Control'ов вычисляемый maxHeight равен pref — без явного
+        // Double.MAX_VALUE подсказка не растягивается и кнопки снизу «сползают»
+        projectPlaceholder.setMaxHeight(Double.MAX_VALUE);
         projectPlaceholder.setAlignment(Pos.CENTER);
         VBox.setVgrow(projectPlaceholder, Priority.ALWAYS);
 
@@ -1064,6 +1141,7 @@ public class UI {
                 event.consume();
             }
         });
+        projectTree.addEventHandler(ContextMenuEvent.CONTEXT_MENU_REQUESTED, this::showTreeContextMenu);
 
         ScrollPane treeScroll = new ScrollPane(projectTree);
         treeScroll.getStyleClass().add("project-scroll");
@@ -1141,6 +1219,7 @@ public class UI {
             projectTree.setRoot(null);
             projectHeaderLabel.setText("PROJECT");
             showProjectTree(false);
+            startWatching(null);
             return;
         }
 
@@ -1152,6 +1231,7 @@ public class UI {
         root.setExpanded(true); // раскрытие подгружает содержимое папки
         projectTree.setRoot(root);
         projectTree.getSelectionModel().clearSelection();
+        startWatching(projectDir); // изменения на диске подхватываются в реальном времени
     }
 
     private void showProjectTree(boolean show) {
@@ -1201,6 +1281,447 @@ public class UI {
         if (selected == null) return;
         Path path = selected.getValue();
         if (path != null && !Files.isDirectory(path)) openFileInTab(path);
+    }
+
+    // ================= КОНТЕКТНОЕ МЕНЮ ДЕРЕВА: СОЗДАНИЕ/ПЕРЕИМЕНОВАНИЕ/УДАЛЕНИЕ =================
+
+    /**
+     * Показывает контекстное меню дерева в точке вызова (правая кнопка мыши):
+     * «New File…», а для файла — ещё «Rename…» и «Delete».
+     */
+    private void showTreeContextMenu(ContextMenuEvent event) {
+        closeMenus();
+
+        if (contextMenu == null) {
+            contextMenu = new VBox();
+            contextMenu.getStyleClass().add("menu-dropdown");
+            contextMenu.setMaxWidth(Region.USE_PREF_SIZE); // ширина строго из CSS (270px)
+            contextMenu.setVisible(false);
+            contextMenu.setManaged(false); // не участвует в раскладке
+            topPanel.getChildren().add(contextMenu); // последним — рисуется поверх
+        }
+
+        TreeItem<Path> clicked = itemAtPosition(event.getSceneX(), event.getSceneY());
+        if (clicked != null) projectTree.getSelectionModel().select(clicked);
+
+        List<Node> items = new ArrayList<>();
+        if (projectDir == null) {
+            // папка не открыта — единственный осмысленный пункт
+            items.add(createMenuItem("Open Folder…", "Ctrl+K", this::openProjectFolder));
+        } else {
+            Path clickedPath = clicked == null ? null : clicked.getValue();
+            boolean clickedDir = clickedPath != null && Files.isDirectory(clickedPath);
+            Path dir = clickedDir ? clickedPath
+                    : (clickedPath != null ? clickedPath.getParent() : projectDir);
+            Path file = clickedPath != null && !clickedDir ? clickedPath : null;
+
+            items.add(createMenuItem("New File…", "", () -> createFileInteractive(dir)));
+            if (file != null) {
+                items.add(createSeparator());
+                items.add(createMenuItem("Rename…", "", () -> renameInteractive(file)));
+                items.add(createMenuItem("Delete", "", () -> deleteInteractive(file)));
+            }
+        }
+
+        contextMenu.getChildren().setAll(items);
+        contextMenu.setVisible(true);
+        contextMenu.applyCss();
+        contextMenu.autosize(); // размер строго по содержимому
+
+        javafx.geometry.Point2D local = topPanel.sceneToLocal(event.getSceneX(), event.getSceneY());
+        double x = local.getX();
+        double y = local.getY();
+        double limitY = root.getHeight() - topPanel.getLayoutY();
+        if (x + contextMenu.getWidth() > root.getWidth()) {
+            x = Math.max(0, root.getWidth() - contextMenu.getWidth());
+        }
+        if (y + contextMenu.getHeight() > limitY) {
+            y = Math.max(0, limitY - contextMenu.getHeight());
+        }
+        contextMenu.setLayoutX(x);
+        contextMenu.setLayoutY(y);
+        contextMenu.requestLayout();
+        contextMenu.layout();
+    }
+
+    /** Ячейка дерева (её узел), находящаяся в заданной точке сцены; null — мимо строк. */
+    @SuppressWarnings("unchecked")
+    private TreeItem<Path> itemAtPosition(double sceneX, double sceneY) {
+        for (Node node : projectTree.lookupAll(".tree-cell")) {
+            if (!(node instanceof TreeCell)) continue;
+            TreeCell<Path> cell = (TreeCell<Path>) node;
+            if (cell.isEmpty() || cell.getTreeItem() == null) continue;
+            Bounds bounds = node.localToScene(node.getBoundsInLocal());
+            if (bounds.contains(sceneX, sceneY)) return cell.getTreeItem();
+        }
+        return null;
+    }
+
+    /** Проверка имени файла. null — имя допустимо, иначе текст ошибки. */
+    private static String validateFileName(String name) {
+        if (name == null || name.trim().isEmpty()) return "Имя файла не может быть пустым.";
+        String trimmed = name.trim();
+        if (trimmed.equals(".") || trimmed.equals("..")) return "Недопустимое имя файла.";
+        if (trimmed.indexOf('/') >= 0 || trimmed.indexOf('\\') >= 0 || trimmed.indexOf('\0') >= 0) {
+            return "Имя не может содержать «/», «\\» и спецсимволы.";
+        }
+        return null;
+    }
+
+    /**
+     * Создаёт файл в папке и открывает его во вкладке.
+     * Возвращает null при успехе, иначе текст ошибки (без диалога).
+     */
+    private String createFile(Path dir, String name) {
+        String error = validateFileName(name);
+        if (error != null) return error;
+        if (dir == null || !Files.isDirectory(dir)) return "Папка назначения не найдена.";
+
+        Path file = dir.resolve(name.trim());
+        if (Files.exists(file)) return "«" + name.trim() + "» уже существует в этой папке.";
+
+        try {
+            Files.createFile(file);
+        } catch (IOException e) {
+            return "Не удалось создать файл: " + e.getMessage();
+        }
+
+        refreshTree(dir);
+        openFileInTab(file);
+        return null;
+    }
+
+    /**
+     * Переименовывает файл и обновляет его вкладку в дереве.
+     * Возвращает null при успехе (или если имя не изменилось), иначе текст ошибки.
+     */
+    private String renameFile(Path path, String newName) {
+        String error = validateFileName(newName);
+        if (error != null) return error;
+
+        Path oldName = path.getFileName();
+        if (oldName == null) return "Не удалось определить имя файла.";
+        if (newName.trim().equals(oldName.toString())) return null;
+
+        Path parent = path.getParent();
+        if (parent == null) return "Не удалось определить папку файла.";
+        Path target = parent.resolve(newName.trim());
+        if (Files.exists(target)) return "«" + newName.trim() + "» уже существует.";
+
+        try {
+            Files.move(path, target);
+        } catch (IOException e) {
+            return "Не удалось переименовать: " + e.getMessage();
+        }
+
+        // обновляем вкладку, если этот файл открыт
+        for (Tab tab : tabs) {
+            if (path.equals(tab.path)) {
+                tab.path = target;
+                tab.title = newName.trim();
+            }
+        }
+        if (path.equals(currentFile)) currentFile = target;
+
+        refreshTree(parent);
+        rebuildTabBar();
+        updateTitle();
+        return null;
+    }
+
+    /**
+     * Удаляет файл (сначала закрывая его вкладку, при необходимости — с вопросом).
+     * Возвращает null при успехе или при отмене пользователем, иначе текст ошибки.
+     */
+    private String deleteFile(Path path) {
+        if (path == null || Files.isDirectory(path)) return "Удаление папок не поддерживается.";
+
+        // сначала закрываем вкладку с этим файлом
+        for (Tab tab : new ArrayList<>(tabs)) {
+            if (path.equals(tab.path) && !closeTab(tab)) return null; // пользователь отказался
+        }
+
+        try {
+            Files.delete(path);
+        } catch (IOException e) {
+            return "Не удалось удалить файл: " + e.getMessage();
+        }
+
+        refreshTree(path.getParent());
+        return null;
+    }
+
+    /** Диалоговая обёртка: создать файл (имя вводит пользователь). */
+    private void createFileInteractive(Path dir) {
+        Optional<String> name = askFileName("Новый файл", "Имя нового файла:", "newfile.txt");
+        if (!name.isPresent()) return;
+        String error = createFile(dir, name.get());
+        if (error != null) showError("Не удалось создать файл", error);
+    }
+
+    /** Диалоговая обёртка: переименовать файл. */
+    private void renameInteractive(Path path) {
+        Optional<String> name = askFileName("Переименовать файл", "Новое имя:",
+                path.getFileName() == null ? "" : path.getFileName().toString());
+        if (!name.isPresent()) return;
+        String error = renameFile(path, name.get());
+        if (error != null) showError("Не удалось переименовать файл", error);
+    }
+
+    /** Диалоговая обёртка: удалить файл (с подтверждением). */
+    private void deleteInteractive(Path path) {
+        Alert confirm = createAlert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Удалить файл");
+        confirm.setHeaderText("Удалить файл «" + path.getFileName() + "»?");
+        confirm.setContentText("Файл будет удалён с диска без возможности вернуть.");
+        Optional<ButtonType> answer = confirm.showAndWait();
+        if (!answer.isPresent() || answer.get() != ButtonType.OK) return;
+
+        String error = deleteFile(path);
+        if (error != null) showError("Не удалось удалить файл", error);
+    }
+
+    /** Окно ввода имени файла (тёмное оформление как у остальных диалогов). */
+    private Optional<String> askFileName(String title, String header, String initial) {
+        TextInputDialog dialog = new TextInputDialog(initial);
+        dialog.setTitle(title);
+        dialog.setHeaderText(header);
+        Window owner = window();
+        if (owner != null) dialog.initOwner(owner);
+        dialog.setOnShowing(event -> {
+            Scene scene = dialog.getDialogPane().getScene();
+            if (scene != null && !scene.getStylesheets().contains(cssUrl(DIALOG_CSS))) {
+                scene.getStylesheets().add(cssUrl(DIALOG_CSS));
+            }
+        });
+        return dialog.showAndWait();
+    }
+
+    /** Обновляет содержимое папки в дереве после создания/переименования/удаления. */
+    private void refreshTree(Path dir) {
+        if (projectDir == null || dir == null || projectTree.getRoot() == null) return;
+        TreeItem<Path> item = findTreeItem(projectTree.getRoot(), dir);
+        if (item == null) return; // папка ещё не подгружена — подгрузится при раскрытии
+        item.getChildren().clear();
+        if (item.isExpanded()) loadDirectory(item); // иначе подхватит раскрытие
+    }
+
+    private static TreeItem<Path> findTreeItem(TreeItem<Path> item, Path dir) {
+        if (item == null || dir == null) return null;
+        if (dir.equals(item.getValue())) return item;
+        for (TreeItem<Path> child : item.getChildren()) {
+            TreeItem<Path> found = findTreeItem(child, dir);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    // ================= НАБЛЮДЕНИЕ ЗА ФАЙЛАМИ НА ДИСКЕ =================
+
+    /**
+     * Следит за папкой проекта в фоне: дерево обновляется в реальном времени,
+     * а вкладка удалённого снаружи файла закрывается (dir == null — останавливает).
+     */
+    private void startWatching(Path dir) {
+        stopWatching();
+        if (dir == null) return;
+
+        WatchService service;
+        try {
+            service = FileSystems.getDefault().newWatchService();
+            registerAll(dir, service);
+        } catch (IOException e) {
+            return; // без наблюдателя — просто не будет автообновления
+        }
+
+        watchService = service;
+        Thread thread = new Thread(() -> watchLoop(service), "iron-ide-project-watch");
+        thread.setDaemon(true);
+        watchThread = thread;
+        thread.start();
+    }
+
+    private void stopWatching() {
+        WatchService service;
+        Thread thread;
+        synchronized (watchLock) {
+            service = watchService;
+            thread = watchThread;
+            watchService = null;
+            watchThread = null;
+            pendingChanged.clear();
+            pendingRemoved.clear();
+            pendingModified.clear();
+            flushQueued = false;
+        }
+        if (service != null) {
+            try {
+                service.close(); // поток наблюдения завершится сам
+            } catch (IOException ignored) {
+                // уже закрыт
+            }
+        }
+        if (thread != null) thread.interrupt();
+    }
+
+    /** Регистрирует наблюдение за папкой и всеми её подпапками. */
+    private static void registerAll(Path root, WatchService service) {
+        try (Stream<Path> walk = Files.walk(root)) {
+            walk.filter(Files::isDirectory).forEach(p -> {
+                try {
+                    p.register(service,
+                            StandardWatchEventKinds.ENTRY_CREATE,
+                            StandardWatchEventKinds.ENTRY_DELETE,
+                            StandardWatchEventKinds.ENTRY_MODIFY);
+                } catch (IOException | RuntimeException ignored) {
+                    // папка исчезла или недоступна
+                }
+            });
+        } catch (IOException | UncheckedIOException ignored) {
+            // не удалось обойти дерево — наблюдается только уже зарегистрированное
+        }
+    }
+
+    /** Цикл фонового потока: ждёт события и объединяет их в одну отрисовку. */
+    private void watchLoop(WatchService service) {
+        for (;;) {
+            WatchKey key;
+            try {
+                key = service.take();
+            } catch (InterruptedException e) {
+                return;
+            } catch (RuntimeException e) { // ClosedWatchServiceException
+                return;
+            }
+
+            Set<Path> changed = new HashSet<>();
+            Set<Path> removed = new HashSet<>();
+            Set<Path> modified = new HashSet<>();
+
+            for (;;) {
+                collectEvents(key, service, changed, removed, modified);
+                WatchKey next = service.poll(); // всплеск событий — обрабатываем сразу
+                if (next == null) break;
+                key = next;
+            }
+
+            synchronized (watchLock) {
+                if (watchService != service) return; // наблюдатель уже заменён
+                pendingChanged.addAll(changed);
+                pendingRemoved.addAll(removed);
+                pendingModified.addAll(modified);
+                if (!flushQueued) {
+                    flushQueued = true;
+                    try {
+                        Platform.runLater(this::flushPending);
+                    } catch (RuntimeException ignored) {
+                        // приложение уже завершается
+                    }
+                }
+            }
+        }
+    }
+
+    private void collectEvents(WatchKey key, WatchService service,
+                               Set<Path> changed, Set<Path> removed, Set<Path> modified) {
+        Path watched = (Path) key.watchable();
+
+        for (WatchEvent<?> event : key.pollEvents()) {
+            if (event.kind() == StandardWatchEventKinds.OVERFLOW) continue;
+            if (!(event.context() instanceof Path)) continue;
+
+            Path child = watched.resolve((Path) event.context());
+            WatchEvent.Kind<?> kind = event.kind();
+
+            if (kind == StandardWatchEventKinds.ENTRY_DELETE) {
+                removed.add(child);
+            } else if (kind == StandardWatchEventKinds.ENTRY_MODIFY) {
+                modified.add(child);
+            } else if (kind == StandardWatchEventKinds.ENTRY_CREATE) {
+                // переименование сюда приходит как CREATE (а уход — как DELETE)
+                if (Files.isDirectory(child)) registerAll(child, service);
+            }
+            changed.add(watched);
+        }
+
+        if (!key.reset()) {
+            removed.add(watched); // сама папка удалена или недоступна
+            if (watched.getParent() != null) changed.add(watched.getParent());
+        }
+    }
+
+    private void flushPending() {
+        Set<Path> changed;
+        Set<Path> removed;
+        Set<Path> modified;
+        synchronized (watchLock) {
+            changed = new HashSet<>(pendingChanged);
+            removed = new HashSet<>(pendingRemoved);
+            modified = new HashSet<>(pendingModified);
+            pendingChanged.clear();
+            pendingRemoved.clear();
+            pendingModified.clear();
+            flushQueued = false;
+        }
+        applyFileChanges(changed, removed, modified);
+    }
+
+    /**
+     * Применяет накопленные изменения диска: закрывает вкладки удалённых
+     * файлов, подхватывает внешние правки в чистых вкладках, обновляет дерево.
+     */
+    private void applyFileChanges(Set<Path> changedDirs, Set<Path> removedPaths,
+                                  Set<Path> modifiedFiles) {
+        if (projectDir == null) return;
+
+        // 1. файл или папка удалены снаружи — закрываем их вкладки
+        for (Tab tab : new ArrayList<>(tabs)) {
+            if (tab.path == null) continue;
+            for (Path gone : removedPaths) {
+                if (tab.path.equals(gone) || tab.path.startsWith(gone)) {
+                    closeTab(tab); // чистая — тихо, с правками — с вопросом
+                    break;
+                }
+            }
+        }
+
+        // 2. содержимое изменилось снаружи — обновляем чистые вкладки
+        for (Path file : modifiedFiles) {
+            for (Tab tab : tabs) {
+                if (file.equals(tab.path)) reloadIfChanged(tab);
+            }
+        }
+
+        // 3. дерево файлов — всегда по свежему состоянию диска
+        for (Path dir : changedDirs) refreshTree(dir);
+    }
+
+    /** Перечитывает файл во вкладке, если он изменился снаружи (и вкладка чистая). */
+    private void reloadIfChanged(Tab tab) {
+        if (tab.path == null || !Files.isRegularFile(tab.path)) return;
+
+        String content;
+        try {
+            content = new String(Files.readAllBytes(tab.path), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            return; // файл исчез — это обработает событие удаления
+        }
+
+        if (tab == activeTab) {
+            if (content.equals(codeField.getText()) || isDirty()) return; // свои правки не трогаем
+            int caret = codeField.getCaretPosition();
+            codeField.replaceText(content);
+            codeField.moveTo(Math.min(caret, content.length()));
+            codeField.requestFollowCaret();
+            savedText = content;
+            tab.text = content;
+            tab.savedText = content;
+            updateTitle();
+        } else {
+            if (content.equals(tab.text) || !Objects.equals(tab.text, tab.savedText)) return;
+            tab.text = content;
+            tab.savedText = content;
+        }
     }
 
 
