@@ -336,8 +336,14 @@ final class MultiCursor {
     }
 
     private void addCaretVertically(int direction) {
-        int position = moveVertically(area.getCaretPosition(), direction);
-        addCaret(position);
+        // Повторное нажатие должно добавлять курсор ниже/выше последнего
+        // добавленного, а не всё время ниже главного.
+        int source = area.getCaretPosition();
+        for (CaretNode caret : carets) {
+            if (direction > 0 && caret.getPosition() > source) source = caret.getPosition();
+            if (direction < 0 && caret.getPosition() < source) source = caret.getPosition();
+        }
+        addCaret(moveVertically(source, direction));
     }
 
     private void addCaret(int position) {

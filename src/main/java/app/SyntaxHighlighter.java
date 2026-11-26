@@ -2,6 +2,7 @@ package app;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.fxmisc.richtext.InlineCssTextArea;
@@ -54,6 +55,14 @@ final class SyntaxHighlighter {
     static final int LITERAL_STRING = 0;
     static final int LITERAL_COMMENT = 1;
 
+    /** Служебные слова, после которых «(» — это не имя функции. */
+    private static final Set<String> NOT_FUNCTION_CALLS = Set.of(
+            "if", "for", "foreach", "while", "switch", "catch", "synchronized",
+            "lock", "return", "new", "throw", "else", "do", "try", "using",
+            "sizeof", "typeof", "alignof", "decltype", "static_assert", "assert",
+            "defined", "template", "requires", "when", "select", "go", "defer",
+            "delete", "await", "yield");
+
     private SyntaxHighlighter() {
     }
 
@@ -67,11 +76,11 @@ final class SyntaxHighlighter {
         List<int[]> literals = findLiterals(text);
 
         // Порядок важен: более поздняя подсветка перекрывает предыдущую.
-        // Сначала — функции и типы, затем ключевые слова и числа.
-        highlightFunctions(area, text, literals);
+        // Функции — последними, чтобы жёлтый цвет не перебивался типами.
         highlight(area, text, TYPES, "#4ec9b0", "normal", literals);
         highlight(area, text, KEYWORDS, "#569cd6", "bold", literals);
         highlight(area, text, NUMBERS, "#b5cea8", "normal", literals);
+        highlightFunctions(area, text, literals);
 
         // Строки и комментарии — поверх всего остального
         for (int[] range : literals) {
@@ -127,10 +136,15 @@ final class SyntaxHighlighter {
     private static void highlightFunctions(InlineCssTextArea area, String text, List<int[]> literals) {
         Matcher matcher = FUNCTIONS.matcher(text);
         while (matcher.find()) {
+            String name = matcher.group(1);
+            if (NOT_FUNCTION_CALLS.contains(name)) continue;
+
             int start = matcher.start(1);
             int end = matcher.end(1);
             if (overlaps(start, end, literals)) continue;
-            area.setStyle(start, end, "-fx-fill: #dcdcaa;");
+
+            // Имена функций — жёлтым, без фона (рамку рисует BlockOverlay).
+            area.setStyle(start, end, "-fx-fill: #ffd700;");
         }
     }
 

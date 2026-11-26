@@ -3,6 +3,7 @@ package app;
 import java.util.function.IntFunction;
 import javafx.scene.Node;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.StackPane;
 import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.InlineCssTextArea;
 import org.fxmisc.richtext.LineNumberFactory;
@@ -76,8 +77,15 @@ final class EditorView {
         // Оформление полосы прокрутки задаётся в Styles.MENU_CSS.
         VirtualizedScrollPane<InlineCssTextArea> scroll = new VirtualizedScrollPane<>(codeField);
 
+        // Рамки блоков рисуются на прозрачном слое поверх текста.
+        // Слой не влияет на разметку и не перехватывает мышь.
+        BlockOverlay blockOverlay = new BlockOverlay(codeField, scroll);
+        StackPane editorStack = new StackPane(scroll, blockOverlay);
+        blockOverlay.widthProperty().bind(editorStack.widthProperty());
+        blockOverlay.heightProperty().bind(editorStack.heightProperty());
+
         Minimap minimap = new Minimap(codeField);
-        BorderPane view = new BorderPane(scroll);
+        BorderPane view = new BorderPane(editorStack);
         view.setRight(minimap);
 
         return new EditorView(codeField, scroll, minimap, multiCursor, view);
