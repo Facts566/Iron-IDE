@@ -25,9 +25,9 @@ This changes how you perceive code: you see the architecture, not just text.
 
 ### 2. Everything Out of the Box (No Extensions)
 We abandoned the extension system for stability and speed. Language support is built directly into the core:
-✅ Python, Java, JavaScript, C#, Rust, D  
-✅ C/C++, Go, Groovy, Scala, Kotlin, Lua  
-✅ Basic, VBS, GDScript, Assembler, Pascal  
+# ✅ Python, Java, JavaScript, C#, Rust, D  
+# ✅ C/C++, Go, Groovy, Scala, Kotlin, Lua  
+# ✅ Basic, VBS, GDScript, Assembler, Pascal  
 
 No version conflicts. No telemetry from third-party plugins. It just works.
 
